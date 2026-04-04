@@ -121,8 +121,8 @@ lancedb, sentence-transformers, networkx, requests, python-dotenv
 
 ## Related
 
-- Blog: Your blog
-- Messaging channel: @your-channel
+- Blog: looi.ru
+- Messaging channel: @cronbun
 
 ## License
 
