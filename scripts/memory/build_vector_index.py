@@ -20,22 +20,32 @@ import time
 import os
 from pathlib import Path
 
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
 OLLAMA_HOST = "http://YOUR_OLLAMA_HOST:11434"
 OLLAMA_MODEL = "nomic-embed-text"
 GOOGLE_EMBED_MODEL = "models/gemini-embedding-2-preview"
 GOOGLE_EMBED_DIMS = 3072
 LCM_DB = Path.home() / ".openclaw/lcm.db"
 VEC_DB = Path.home() / ".openclaw/memory/chat_vectors.db"
-CHUNK_SIZE = 600       # chars per chunk
-CHUNK_OVERLAP = 100    # overlap between chunks
-BATCH_SIZE = 20        # texts per API batch (Google batchEmbedContents)
+CHUNK_SIZE = 600       # chars per chunk — balances context window vs granularity
+CHUNK_OVERLAP = 100    # overlap between chunks to avoid cutting sentences
+BATCH_SIZE = 20        # texts per API batch (Google batchEmbedContents limit)
+
+# ---------------------------------------------------------------------------
+# Embedding providers (Google primary, Ollama fallback)
+# ---------------------------------------------------------------------------
 
 def _get_google_api_key() -> str:
+    """Read Google AI API key from OpenClaw config file."""
     cfg_path = Path.home() / ".openclaw/openclaw.json"
     cfg = json.loads(cfg_path.read_text())
     return cfg["env"]["vars"]["GOOGLE_AI_API_KEY"]
 
 def _google_available() -> bool:
+    """Check if Google AI API key is configured and non-empty."""
     try:
         key = _get_google_api_key()
         return bool(key)
@@ -86,20 +96,36 @@ def _ollama_embed(texts: list[str]) -> list[list[float]]:
         result = json.loads(resp.read())
     return result["embeddings"]
 
+# ---------------------------------------------------------------------------
+# Vector math and serialization utilities
+# ---------------------------------------------------------------------------
+
 def cosine_sim(a: list[float], b: list[float]) -> float:
+    """Compute cosine similarity between two vectors (pure Python, no numpy)."""
     dot = sum(x*y for x,y in zip(a,b))
     na = math.sqrt(sum(x*x for x in a))
     nb = math.sqrt(sum(x*x for x in b))
     return dot / (na * nb) if na and nb else 0.0
 
 def pack_vector(vec: list[float]) -> bytes:
+    """Serialize a float vector to a compact binary BLOB for SQLite storage."""
     return struct.pack(f"{len(vec)}f", *vec)
 
 def unpack_vector(blob: bytes) -> list[float]:
+    """Deserialize a binary BLOB back to a list of floats."""
     n = len(blob) // 4
     return list(struct.unpack(f"{n}f", blob))
 
+# ---------------------------------------------------------------------------
+# Text chunking
+# ---------------------------------------------------------------------------
+
 def chunk_text(text: str) -> list[str]:
+    """Split text into overlapping chunks of CHUNK_SIZE chars.
+
+    Short texts (<=CHUNK_SIZE) are returned as a single chunk.
+    Overlap ensures sentence boundaries aren't lost between chunks.
+    """
     if len(text) <= CHUNK_SIZE:
         return [text]
     chunks = []
@@ -110,7 +136,12 @@ def chunk_text(text: str) -> list[str]:
         start += CHUNK_SIZE - CHUNK_OVERLAP
     return chunks
 
+# ---------------------------------------------------------------------------
+# Database schema and data loading
+# ---------------------------------------------------------------------------
+
 def init_vec_db(conn):
+    """Create the chunks table and indexes if they don't exist."""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS chunks (
             chunk_id    INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -129,10 +160,17 @@ def init_vec_db(conn):
     conn.commit()
 
 def get_indexed_message_ids(vec_conn) -> set:
+    """Return the set of message_ids already indexed in the vector DB."""
     rows = vec_conn.execute("SELECT DISTINCT message_id FROM chunks").fetchall()
     return {r[0] for r in rows}
 
 def load_messages(lcm_conn, skip_ids: set) -> list[dict]:
+    """Load user/assistant messages from lcm.db, skipping already-indexed IDs.
+
+    Filters out:
+        - Messages shorter than 20 chars (noise)
+        - Session startup boilerplate messages
+    """
     rows = lcm_conn.execute("""
         SELECT m.message_id, m.conversation_id, m.role, m.content, m.created_at
         FROM messages m
@@ -158,7 +196,16 @@ def load_messages(lcm_conn, skip_ids: set) -> list[dict]:
         })
     return result
 
+# ---------------------------------------------------------------------------
+# Index building and search
+# ---------------------------------------------------------------------------
+
 def build_index(update_only=False):
+    """Build or incrementally update the vector index.
+
+    When update_only=True, only new messages (not yet in vector DB) are indexed.
+    Processes messages in batches of BATCH_SIZE, with retry on embed errors.
+    """
     if not _google_available() and not ollama_available():
         print("⚠️  No embedding provider available — skipping.")
         sys.exit(0)
@@ -254,6 +301,14 @@ def rerank(query: str, candidates: list, top_k: int) -> list:
 
 
 def search(query: str, top_k: int = 5):
+    """Search the vector index for chunks most similar to the query.
+
+    Uses brute-force cosine similarity over all chunks. Optionally reranks
+    with a CrossEncoder model if SEARCH_HISTORY_RERANK=1 is set.
+
+    Note: For production use, prefer search_history_fast.py which uses
+    numpy memmap caching and hybrid lexical+vector scoring.
+    """
     if not VEC_DB.exists():
         print("Vector DB not found. Run build_vector_index.py first.")
         sys.exit(1)

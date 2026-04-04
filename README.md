@@ -4,6 +4,28 @@
 
 Extensions for [OpenClaw](https://github.com/openclaw/openclaw) built while running a personal AI agent daily. Four modules: persistent memory, reliable cron jobs, proactive notifications, and cost control.
 
+## File tree
+
+```
+clawd/
+├── README.md
+├── soul/                              # Proactive notification daemon
+│   ├── soul_collect.py                # Signal collection (weather, threads, app data)
+│   ├── soul_decide.py                 # Rule-based filtering (thresholds, time gates)
+│   ├── soul_notify.py                 # Notification preparation and sent_log tracking
+│   ├── soul_runner.sh                 # Cron wrapper: collect → decide → notify pipeline
+│   └── SOUL_DAEMON_SPEC.md            # Detailed specification document
+├── scripts/
+│   └── memory/                        # Memory and search subsystem
+│       ├── build_vector_index.py      # Build/update SQLite vector index from chat history
+│       ├── search_history_fast.py     # Fast hybrid semantic+lexical search (numpy memmap)
+│       ├── unified_search.py          # Combined vector + entity graph search CLI
+│       └── search_history.sh          # Shell wrapper for full-text search
+└── skills/
+    └── cron-model-fallback/
+        └── fallback.py                # LLM model fallback chain for cron jobs
+```
+
 ## What's inside
 
 ### `memory/`
@@ -51,7 +73,7 @@ Proactive agent notifications without constant LLM calls. Principle: Python firs
 Three files:
 - **`soul_collect.py`** — runs hourly via cron. No LLM. Collects signals: open threads, weather, new registrations, server status.
 - **`soul_decide.py`** — filters signals through rules. Quiet hours: 10:00–16:00 YOUR_TIMEZONE (work time), 03:00–10:00 (night). Thresholds: not every event is worth a notification.
-- **`soul_notify.py`** — called only when a signal passes all filters. Invokes LLM to compose a short summary and sends to Telegram.
+- **`soul_notify.py`** — called only when a signal passes all filters. Invokes LLM to compose a short summary and sends via configured messaging platform.
 
 ```bash
 # Run manually
@@ -90,7 +112,7 @@ This cut daily token spend by ~50%.
 - Python 3.10+
 - OpenClaw installed and configured
 - LanceDB: `pip install lancedb`
-- For Soul Daemon: Telegram bot token in environment
+- For Soul Daemon: messaging bot token in environment
 
 Key imports across modules:
 ```
@@ -99,8 +121,8 @@ lancedb, sentence-transformers, networkx, requests, python-dotenv
 
 ## Related
 
-- Blog: http://looi.ru
-- Telegram channel: @cronbun at telegramm
+- Blog: Your blog
+- Messaging channel: @your-channel
 
 ## License
 

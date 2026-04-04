@@ -41,6 +41,11 @@ VECTOR_CANDIDATES = 900
 
 @dataclass
 class CacheBundle:
+    """Pre-computed normalized embedding matrix and associated metadata arrays.
+
+    All arrays are aligned by index: chunk_ids[i] corresponds to matrix[i].
+    The matrix is a memory-mapped file for zero-copy access on repeated searches.
+    """
     chunk_ids: np.ndarray
     message_ids: np.ndarray
     conv_ids: np.ndarray
@@ -48,7 +53,12 @@ class CacheBundle:
     matrix: np.memmap
 
 
+# ---------------------------------------------------------------------------
+# Embedding providers
+# ---------------------------------------------------------------------------
+
 def get_key():
+    """Load Google AI API key from OpenClaw config file."""
     try:
         return json.loads(CFG.read_text())["env"]["vars"]["GOOGLE_AI_API_KEY"]
     except Exception:
@@ -56,6 +66,15 @@ def get_key():
 
 
 def embed_google(text, key):
+    """Embed a single text using Google's gemini-embedding-2-preview model.
+
+    Args:
+        text: Input text (truncated to 8000 chars to stay within API limits).
+        key: Google AI API key.
+
+    Returns:
+        List of floats representing the embedding vector.
+    """
     url = f"https://generativelanguage.googleapis.com/v1beta/{GOOGLE_MODEL}:embedContent?key={key}"
     payload = json.dumps({"model": GOOGLE_MODEL, "content": {"parts": [{"text": text[:8000]}]}}).encode()
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
@@ -65,6 +84,14 @@ def embed_google(text, key):
 
 
 def embed_ollama(text):
+    """Embed a single text using local Ollama nomic-embed-text model.
+
+    Args:
+        text: Input text (truncated to 4000 chars for Ollama's context window).
+
+    Returns:
+        List of floats representing the embedding vector.
+    """
     url = f"{OLLAMA_HOST}/api/embeddings"
     payload = json.dumps({"model": "nomic-embed-text", "prompt": text[:4000]}).encode()
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
@@ -100,7 +127,15 @@ def embed_query(query: str) -> np.ndarray | None:
     return q / n
 
 
+# ---------------------------------------------------------------------------
+# Cache identity and database helpers
+# ---------------------------------------------------------------------------
+
 def db_signature() -> dict:
+    """Return a dict identifying the current state of the vector DB file.
+
+    Used as a cache key: if size or mtime changes, the cache is invalidated.
+    """
     st = VEC_DB.stat()
     return {
         "path": str(VEC_DB),
@@ -110,18 +145,22 @@ def db_signature() -> dict:
 
 
 def cache_prefix(sig: dict, dims: int) -> str:
+    """Generate a short hash prefix for cache filenames based on DB signature + dims."""
     src = f"{sig['path']}|{sig['size']}|{sig['mtime_ns']}|{dims}"
     return hashlib.sha1(src.encode()).hexdigest()[:16]
 
 
 def _conn():
+    """Open a read-optimized SQLite connection to the vector DB."""
     conn = sqlite3.connect(str(VEC_DB))
+    # WAL mode allows concurrent reads during writes
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     return conn
 
 
 def count_rows(conn: sqlite3.Connection, dims: int) -> int:
+    """Count chunks whose embedding blob matches the expected dimension size."""
     return int(
         conn.execute("SELECT COUNT(*) FROM chunks WHERE length(embedding)=?", (dims * 4,)).fetchone()[0]
     )
@@ -216,6 +255,11 @@ def build_cache(dims: int, sig: dict, prefix: str) -> CacheBundle:
 
 
 def load_or_build_cache(dims: int) -> CacheBundle:
+    """Load cached embedding matrix from disk, or build it if stale/missing.
+
+    Cache invalidation is based on DB file size + mtime + embedding dimensions.
+    Returns a CacheBundle with memory-mapped matrix for zero-copy vector ops.
+    """
     sig = db_signature()
     prefix = cache_prefix(sig, dims)
     meta_path = CACHE_DIR / f"{prefix}.meta.json"
@@ -242,7 +286,16 @@ def load_or_build_cache(dims: int) -> CacheBundle:
     return build_cache(dims=dims, sig=sig, prefix=prefix)
 
 
+# ---------------------------------------------------------------------------
+# Lexical search (FTS5 + fallback)
+# ---------------------------------------------------------------------------
+
 def tokens_for_query(text: str) -> list[str]:
+    """Extract up to 8 unique lowercase tokens (2+ chars) from query text.
+
+    Supports Latin and Cyrillic characters. Used for FTS5 matching and
+    LIKE-based fallback queries.
+    """
     # Keep simple alnum tokens (both Latin/Cyrillic); drop tiny tokens.
     toks = re.findall(r"[\w\-]{2,}", text.lower())
     # Stable unique order
@@ -272,6 +325,11 @@ def ensure_fts(conn: sqlite3.Connection):
 
 
 def lexical_candidates(conn: sqlite3.Connection, query: str, limit: int = LEXICAL_CANDIDATES):
+    """Find candidate chunk IDs via lexical matching, returning {chunk_id: score}.
+
+    Primary path: FTS5 with BM25 scoring (fast, quality ranking).
+    Fallback: plain SQL LIKE queries if FTS5 table creation fails.
+    """
     toks = tokens_for_query(query)
     if not toks:
         return {}
@@ -305,7 +363,15 @@ def lexical_candidates(conn: sqlite3.Connection, query: str, limit: int = LEXICA
     return scores
 
 
+# ---------------------------------------------------------------------------
+# Hybrid scoring and result formatting
+# ---------------------------------------------------------------------------
+
 def candidate_row_indices(chunk_ids_sorted: np.ndarray, wanted_chunk_ids: Iterable[int]) -> np.ndarray:
+    """Map a set of chunk IDs to their row indices in the sorted cache arrays.
+
+    Uses numpy searchsorted for O(n log n) lookup instead of dict-based O(n).
+    """
     wanted = np.asarray(sorted(set(int(x) for x in wanted_chunk_ids)), dtype=np.int64)
     if wanted.size == 0:
         return np.empty((0,), dtype=np.int64)
@@ -315,10 +381,16 @@ def candidate_row_indices(chunk_ids_sorted: np.ndarray, wanted_chunk_ids: Iterab
 
 
 def normalize_text_key(text: str) -> str:
+    """Create a normalized key for near-duplicate detection (lowercase, no punctuation, trimmed)."""
     return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", "", text.lower())).strip()[:200]
 
 
 def is_noisy_chunk(text: str) -> bool:
+    """Detect chunks that are tool calls, base64 blobs, system boilerplate, or encoded noise.
+
+    These are artifacts of the chat protocol and never useful for recall.
+    Returns True if the chunk should be filtered out of search results.
+    """
     if not text:
         return True
     t = text.strip()
@@ -361,6 +433,7 @@ def is_noisy_chunk(text: str) -> bool:
 
 
 def clean_preview(text: str, limit: int = 700) -> str:
+    """Collapse whitespace and truncate text with ellipsis for display."""
     t = re.sub(r'\s+', ' ', (text or '').strip())
     if len(t) <= limit:
         return t
@@ -368,6 +441,11 @@ def clean_preview(text: str, limit: int = 700) -> str:
 
 
 def fetch_details(conn: sqlite3.Connection, chunk_ids: list[int]):
+    """Batch-fetch full chunk metadata from SQLite for a list of chunk IDs.
+
+    Returns:
+        dict mapping chunk_id -> {message_id, role, text, created_at, chunk_index}
+    """
     if not chunk_ids:
         return {}
     ph = ",".join("?" for _ in chunk_ids)
@@ -388,6 +466,18 @@ def fetch_details(conn: sqlite3.Connection, chunk_ids: list[int]):
 
 
 def hybrid_search(query: str, top_k: int):
+    """Run hybrid semantic + lexical search and return deduplicated results.
+
+    Strategy:
+        1. Embed the query (Google -> Ollama fallback)
+        2. Get lexical candidates via FTS5/LIKE
+        3. If embedding available: score vector similarity on lexical shortlist
+           (or full matrix if shortlist is too small)
+        4. Blend scores: 78% vector + 22% lexical
+        5. Deduplicate by message_id and near-duplicate text
+
+    Falls back to lexical-only if no embedding provider is available.
+    """
     emb = embed_query(query)
 
     conn = _conn()
@@ -442,6 +532,11 @@ def hybrid_search(query: str, top_k: int):
 
 
 def dedupe_and_format(ranked: list[tuple[int, float]], details: dict, top_k: int, score_label: str):
+    """Deduplicate ranked results by message_id and near-duplicate text.
+
+    Filters out noisy chunks (tool calls, base64, etc.) and returns up to
+    top_k clean, unique results formatted for display.
+    """
     out = []
     seen_msg = set()
     seen_text = set()
@@ -484,7 +579,12 @@ def dedupe_and_format(ranked: list[tuple[int, float]], details: dict, top_k: int
     return out
 
 
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
+
 def main():
+    """CLI entry point: parse args, run hybrid search, print formatted results."""
     if len(sys.argv) < 2:
         print("Usage: search_history_fast.py <query> [top_k]", file=sys.stderr)
         sys.exit(2)

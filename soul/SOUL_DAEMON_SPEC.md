@@ -13,7 +13,7 @@
   ├── reads ved/state.json → open_threads, urgency
   ├── wttr.in CityA + CityB → weather
   ├── PocketBase API your-app.example.com → new registrations/views in 24h
-  ├── Telegram bot history → close contacts (last message + timestamp)
+  ├── Messaging API → monitored contacts (last message + timestamp)
   ├── Channel stats → subscribers (delta in 24h)
   └── Result → soul/signals_latest.json
 
@@ -27,7 +27,7 @@
 [g-flash agent] — ONLY if there is a signal
   ├── Receives: signals_latest.json + open_threads context
   ├── Generates: interpreted summary (what + indicators + what to pay attention to)
-  └── Sends to Telegram topic:40 (personal) or topic:39 (system)
+  └── Sends to PERSONAL_TOPIC or SYSTEM_TOPIC (configure in env)
 ```
 
 **Key principle:** LLM runs only when data has already been filtered. Collection and decision — pure Python.
@@ -41,17 +41,17 @@
 | `ved/state.json` | `json.load()` | open_threads with urgency=action_needed |
 | Weather | `wttr.in/:city?format=j1` | temp, description, CityA + CityB |
 | your-app.example.com | PocketBase REST API (YOUR_SERVER_IP:8090) | new records/registrations in 24h |
-| @your-channel | Telegram Bot API | subscriber delta (if available) |
-| Close contacts | Telegram Bot API sessions history | timestamp of last message |
+| @your-channel | Messaging Bot API | subscriber delta (if available) |
+| Monitored contacts | Messaging Bot API sessions history | timestamp of last message |
 
-**[Skeptic]:** PocketBase API — no auth token, need to add. Telegram sessions history — not guaranteed to be directly accessible, need to verify endpoint. Better to start with wttr.in + ved + app API as the most reliable.
+**[Skeptic]:** PocketBase API — no auth token, need to add. Messaging sessions history — not guaranteed to be directly accessible, need to verify endpoint. Better to start with wttr.in + ved + app API as the most reliable.
 
 ---
 
 ## 3. Sources v2 (after stabilizing v1)
 
 - YouTube channels — RSS feed for new videos
-- Telegram channels — parsing via Bot API or MTProto
+- Messaging channels — parsing via Bot API or equivalent
 - Web mentions — web_fetch + parsing
 - Name mentions — Serper/Tavily search once per day
 - Facebook — difficult without API, skip for now
@@ -89,8 +89,8 @@ THRESHOLDS = {
     "app_new_registration": 1,            # ≥1 new registration in 24h
     "channel_subscriber_delta": 5,        # +5 subscribers in 24h
     "weather_warning": ["rain", "storm", "ice"],  # dangerous weather
-    "close_person_silent_days": 3,        # contact hasn't written in >3 days
-    "close_person_silent_days_alt": 7,    # another contact hasn't written in >7 days
+    "monitored_contact_silent_days": 3,        # contact hasn't written in >3 days
+    "monitored_contact_silent_days_alt": 7,    # another contact hasn't written in >7 days
 }
 ```
 
@@ -203,13 +203,13 @@ if __name__ == "__main__":
 ```
 
 **Week 2:** add soul_decide.py + silence rules + first LLM synthesis (g-flash).
-**Week 3:** connect PocketBase API + Telegram sessions for close contacts.
+**Week 3:** connect PocketBase API + messaging sessions for monitored contacts.
 
 ---
 
 ## Risks (Skeptic, final word)
 
-1. **Telegram sessions** — no direct API for reading conversations with specific people. Need MTProto or a special endpoint. Without this — close contacts remain outside v1.
+1. **Messaging sessions** — no direct API for reading conversations with specific people. Need platform-specific protocol or endpoint. Without this — monitored contacts remain outside v1.
 2. **Channel stats** — no public API for subscriber delta. Need a custom solution.
 3. **Threshold drift** — in a month "3 new registrations" might be the norm, not a signal. Thresholds need manual review once a month.
 4. **Weather noise** — "Cloudy in CityB" is not a signal. Filter only extreme conditions.
