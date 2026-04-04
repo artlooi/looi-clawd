@@ -99,8 +99,8 @@ lancedb, sentence-transformers, networkx, requests, python-dotenv
 
 ## Related
 
-- Blog: Your blog
-- Telegram channel: @your-channel
+- Blog: http://looi.ru
+- Telegram channel: @cronbun at telegramm
 
 ## License
 
