@@ -32,9 +32,9 @@ except ImportError:
 
 # --- Constants ---
 DEFAULT_TIMEOUT_SEC = 30
-DEFAULT_MAX_TOKENS = 2048
+DEFAULT_MAX_TOKENS=***
 OPENCLAW_BASE_URL = "http://127.0.0.1:18789"
-TOKEN_ENV_VAR = "OPENCLAW_TOKEN"
+TOKEN_ENV_VAR="***"
 CONFIG_PATH = Path.home() / ".openclaw" / "openclaw.json"
 
 # Exit codes
@@ -51,7 +51,7 @@ EXIT_TEST_NO_MODELS = 3
 def load_token() -> Optional[str]:
     """Load the OpenClaw auth token from env var or config file."""
     # 1. Environment variable (highest priority)
-    token = os.environ.get(TOKEN_ENV_VAR)
+    token=os.env...VAR)
     if token:
         return token.strip()
 
@@ -60,7 +60,7 @@ def load_token() -> Optional[str]:
         try:
             with CONFIG_PATH.open("r", encoding="utf-8") as fh:
                 config = json.load(fh)
-            token = (
+            token=***
                 config
                 .get("gateway", {})
                 .get("auth", {})
@@ -121,7 +121,7 @@ def try_model(
     """
     Attempt to run a prompt against a single model via OpenClaw CLI.
 
-    Uses: openclaw agent --message <prompt> --agent klin --json
+    Uses: openclaw agent --message <prompt> --agent your-agent --json
     The model is checked for reachability before running.
 
     Returns the response text on success, or None on any failure.
@@ -135,7 +135,7 @@ def try_model(
 
     try:
         result = subprocess.run(
-            ["openclaw", "agent", "--message", prompt, "--agent", "klin", "--json"],
+            ["openclaw", "agent", "--message", prompt, "--agent", "your-agent", "--json"],
             capture_output=True,
             text=True,
             timeout=timeout_sec,
@@ -216,7 +216,7 @@ def run_with_fallback(
         result = try_model(
             model=model,
             prompt=prompt,
-            token=token,
+            token=***
             timeout_sec=timeout_sec,
             quiet=quiet,
         )
@@ -355,7 +355,7 @@ def main() -> int:
         return EXIT_CONFIG_ERROR
 
     # Load auth token
-    token = load_token()
+    token=***
     if not token:
         print(
             f"ERROR: No auth token found.\n"
@@ -404,7 +404,7 @@ def main() -> int:
     result, winning_model, attempts = run_with_fallback(
         models=models,
         prompt=prompt,
-        token=token,
+        token=***
         timeout_sec=args.timeout,
         quiet=args.quiet,
     )

@@ -7,18 +7,18 @@ import sys
 
 try:
     import zoneinfo
-    MSK = zoneinfo.ZoneInfo("Europe/Moscow")
+    TZ = zoneinfo.ZoneInfo(os.environ.get("SOUL_TIMEZONE", "Europe/Moscow"))
 except ImportError:
     from datetime import timezone, timedelta
-    MSK = timezone(timedelta(hours=3))
+    TZ = timezone(timedelta(hours=3))
 
-WORKSPACE = "/home/looi/.openclaw/workspace"
+WORKSPACE = os.environ.get("SOUL_WORKSPACE", "/home/user/.openclaw/workspace")
 SOUL_DIR = f"{WORKSPACE}/soul"
 
 THRESHOLDS = {
     "open_thread_urgent": 1,
-    "radar_new_registration": 1,
-    "cronbun_subscriber_delta": 5,
+    "app_new_registration": 1,
+    "channel_subscriber_delta": 5,
     "close_person_silent_hours": 72,  # 3 days
 }
 
@@ -39,8 +39,8 @@ def already_sent_today(sent_log, key):
 
 
 def decide():
-    now_msk = datetime.datetime.now(tz=MSK)
-    hour = now_msk.hour
+    now_tz = datetime.datetime.now(tz=TZ)
+    hour = now_tz.hour
 
     signals = load_json(f"{SOUL_DIR}/signals_latest.json")
     sent_log = load_json(f"{SOUL_DIR}/sent_log.json")
@@ -64,23 +64,23 @@ def decide():
                 "type": "urgent_thread",
                 "value": urgent_count,
                 "detail": titles[:3],
-                "label": f"{urgent_count} задач требуют действия"
+                "label": f"{urgent_count} tasks require action"
             })
 
-    # 2. Radar registrations — respect all silences
-    radar_regs = signals.get("radar_registrations_24h", 0)
-    if radar_regs >= THRESHOLDS["radar_new_registration"]:
-        key = "radar_registration"
+    # 2. App registrations — respect all silences
+    app_regs = signals.get("app_registrations_24h", 0)
+    if app_regs >= THRESHOLDS["app_new_registration"]:
+        key = "app_registration"
         if not night_silence and not work_silence and not already_sent_today(sent_log, key):
             active_signals.append({
                 "key": key,
-                "type": "radar",
-                "value": radar_regs,
-                "label": f"{radar_regs} новых регистраций на radar.looi.ru за 24ч"
+                "type": "app",
+                "value": app_regs,
+                "label": f"{app_regs} new registrations on your-app.example.com in 24h"
             })
 
     # 3. Weather warnings
-    for city in ["moscow", "volzhsky"]:
+    for city in ["city_a", "city_b"]:
         w = signals.get(f"weather_{city}", {})
         desc = w.get("desc", "").lower()
         if any(warn in desc for warn in WEATHER_WARNINGS):
@@ -90,13 +90,13 @@ def decide():
                     "key": key,
                     "type": "weather",
                     "value": desc,
-                    "label": f"Опасная погода в {'Москве' if city == 'moscow' else 'Волжском'}: {w.get('desc')}, {w.get('temp')}C"
+                    "label": f"Dangerous weather in {city}: {w.get('desc')}, {w.get('temp')}C"
                 })
 
     # 4. Close persons silent (placeholder - hours_ago fields)
     for person, field, label in [
-        ("lera", "lera_last_message_hours_ago", "Лера"),
-        ("son", "son_last_message_hours_ago", "сын"),
+        ("contact_a", "contact_a_last_message_hours_ago", "Contact A"),
+        ("contact_b", "contact_b_last_message_hours_ago", "Contact B"),
     ]:
         hours_ago = signals.get(field)
         if hours_ago and hours_ago >= THRESHOLDS["close_person_silent_hours"]:
@@ -106,23 +106,23 @@ def decide():
                     "key": key,
                     "type": "close_person",
                     "value": hours_ago,
-                    "label": f"{label} не писал(а) {hours_ago}ч"
+                    "label": f"{label} hasn't written in {hours_ago}h"
                 })
 
     if not active_signals:
         reasons = []
         if night_silence:
-            reasons.append("ночная тишина 00-08")
+            reasons.append("night silence 00-08")
         elif work_silence:
-            reasons.append("рабочий блок 10-16")
+            reasons.append("work block 10-16")
         else:
-            reasons.append("нет сигналов выше порога")
+            reasons.append("no signals above threshold")
         result = {"should_send": False, "reason": ", ".join(reasons)}
     else:
         result = {
             "should_send": True,
             "signals": active_signals,
-            "reason": f"{len(active_signals)} активных сигналов"
+            "reason": f"{len(active_signals)} active signals"
         }
 
     print(json.dumps(result, ensure_ascii=False, indent=2))

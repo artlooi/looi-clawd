@@ -5,7 +5,7 @@ import sys
 import os
 import datetime
 
-WORKSPACE = "/home/looi/.openclaw/workspace"
+WORKSPACE = os.environ.get("SOUL_WORKSPACE", "/home/user/.openclaw/workspace")
 SOUL_DIR = f"{WORKSPACE}/soul"
 
 
@@ -42,13 +42,13 @@ def notify():
     signals = decision.get("signals", [])
     signal_text = "\n".join(f"- {s['label']}" for s in signals)
 
-    prompt = f"""Ты второй ум Артура Арсенова — продуктового дизайнера, картостроителя.
+    prompt = f"""You are a personal AI assistant — a second mind for the user.
 
-Вот сигналы из его системы:
+Here are signals from their monitoring system:
 {signal_text}
 
-Напиши интерпретированную сводку: что происходит + признаки + на что обратить внимание.
-Кратко, 3-5 предложений. Без воды. Говори как партнёр, не как уведомление."""
+Write an interpreted summary: what is happening + indicators + what to pay attention to.
+Keep it brief, 3-5 sentences. No fluff. Speak as a partner, not as a notification."""
 
     # Save pending notification (real send happens via heartbeat or cron integration)
     pending = {

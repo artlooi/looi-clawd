@@ -1,6 +1,8 @@
-# looi-clawd
+# clawd
 
-Extensions for [OpenClaw](https://github.com/openclaw/openclaw) that I built while running a personal AI agent daily. Four modules: persistent memory, reliable cron jobs, proactive notifications, and cost control. Written by a product designer, not a developer.
+> ⚠️ Before using, replace all placeholder values (YOUR_SERVER_IP, your-domain.com, YOUR_TIMEZONE, etc.) with your actual configuration.
+
+Extensions for [OpenClaw](https://github.com/openclaw/openclaw) built while running a personal AI agent daily. Four modules: persistent memory, reliable cron jobs, proactive notifications, and cost control.
 
 ## What's inside
 
@@ -48,7 +50,7 @@ Proactive agent notifications without constant LLM calls. Principle: Python firs
 
 Three files:
 - **`soul_collect.py`** — runs hourly via cron. No LLM. Collects signals: open threads, weather, new registrations, server status.
-- **`soul_decide.py`** — filters signals through rules. Quiet hours: 10:00–16:00 MSK (work time), 03:00–10:00 (night). Thresholds: not every event is worth a notification.
+- **`soul_decide.py`** — filters signals through rules. Quiet hours: 10:00–16:00 YOUR_TIMEZONE (work time), 03:00–10:00 (night). Thresholds: not every event is worth a notification.
 - **`soul_notify.py`** — called only when a signal passes all filters. Invokes LLM to compose a short summary and sends to Telegram.
 
 ```bash
@@ -97,8 +99,8 @@ lancedb, sentence-transformers, networkx, requests, python-dotenv
 
 ## Related
 
-- Article (RU): [looi.ru/a/looi-clawd](https://looi.ru/a/looi-clawd)
-- Telegram channel: [@cronbun](https://t.me/cronbun)
+- Blog: Your blog
+- Telegram channel: @your-channel
 
 ## License
 

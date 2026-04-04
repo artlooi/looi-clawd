@@ -1,169 +1,169 @@
 # Soul Daemon Spec v1
-> Цифровая нервная система Клина. Второй ум. Не спам — сигнал когда момент подходящий.
-> Принцип: лучше пропустить 3 слабых, чем прислать 1 лишний шумный.
+> Digital nervous system for the agent. A second mind. Not spam — a signal when the moment is right.
+> Principle: better to miss 3 weak signals than to send 1 noisy one.
 
 ---
 
-## 1. Архитектура
+## 1. Architecture
 
 ```
-[Cron каждые 60 мин]
+[Cron every 60 min]
        ↓
-[soul_collect.py] — БЕЗ LLM
-  ├── читает ved/state.json → open_threads, urgency
-  ├── wttr.in Москва + Волжский → погода
-  ├── PocketBase API radar.looi.ru → новые регистрации/просмотры за сутки
-  ├── Telegram bot history → Лера + сын (последнее сообщение + timestamp)
-  ├── CronBun stats → подписчики (delta за 24ч)
-  └── Результат → soul/signals_latest.json
+[soul_collect.py] — NO LLM
+  ├── reads ved/state.json → open_threads, urgency
+  ├── wttr.in CityA + CityB → weather
+  ├── PocketBase API your-app.example.com → new registrations/views in 24h
+  ├── Telegram bot history → close contacts (last message + timestamp)
+  ├── Channel stats → subscribers (delta in 24h)
+  └── Result → soul/signals_latest.json
 
-[soul_decide.py] — БЕЗ LLM
-  ├── Читает signals_latest.json
-  ├── Сравнивает с soul/signals_prev.json (delta)
-  ├── Применяет правила тишины (время, уже отправлено, слабый сигнал)
-  ├── Если порог не пройден → выход (ничего не делать)
-  └── Если порог пройден → передать данные LLM агенту
+[soul_decide.py] — NO LLM
+  ├── Reads signals_latest.json
+  ├── Compares with soul/signals_prev.json (delta)
+  ├── Applies silence rules (time, already sent, weak signal)
+  ├── If threshold not reached → exit (do nothing)
+  └── If threshold reached → pass data to LLM agent
 
-[g-flash агент] — ТОЛЬКО если есть сигнал
-  ├── Получает: signals_latest.json + контекст open_threads
-  ├── Формирует: интерпретированная сводка (что + признаки + на что обратить)
-  └── Отправляет в Telegram topic:40 (личное) или topic:39 (система)
+[g-flash agent] — ONLY if there is a signal
+  ├── Receives: signals_latest.json + open_threads context
+  ├── Generates: interpreted summary (what + indicators + what to pay attention to)
+  └── Sends to Telegram topic:40 (personal) or topic:39 (system)
 ```
 
-**Ключевой принцип:** LLM запускается только когда данные уже отфильтрованы. Сбор и решение — чистый Python.
+**Key principle:** LLM runs only when data has already been filtered. Collection and decision — pure Python.
 
 ---
 
-## 2. Источники v1 (стабильные, реализуемые сейчас)
+## 2. Sources v1 (stable, implementable now)
 
-| Источник | Метод | Что берём |
+| Source | Method | What we get |
 |---|---|---|
-| `ved/state.json` | `json.load()` | open_threads с urgency=action_needed |
-| Погода | `wttr.in/:city?format=j1` | temp, description, Москва + Волжский |
-| radar.looi.ru | PocketBase REST API (64.188.74.59:8090) | новые записи/регистрации за 24ч |
-| CronBun @cronbun | Telegram Bot API | delta подписчиков (если доступно) |
-| Лера + сын | Telegram Bot API sessions history | timestamp последнего сообщения |
+| `ved/state.json` | `json.load()` | open_threads with urgency=action_needed |
+| Weather | `wttr.in/:city?format=j1` | temp, description, CityA + CityB |
+| your-app.example.com | PocketBase REST API (YOUR_SERVER_IP:8090) | new records/registrations in 24h |
+| @your-channel | Telegram Bot API | subscriber delta (if available) |
+| Close contacts | Telegram Bot API sessions history | timestamp of last message |
 
-**[Скептик]:** PocketBase API — нет auth token, надо добавить. Telegram sessions history — не факт что доступен напрямую, нужно проверить endpoint. Лучше начать с wttr.in + ved + radar как самых надёжных.
-
----
-
-## 3. Источники v2 (после стабилизации v1)
-
-- YouTube канал Ильи Воробьёва — RSS фид новых видео
-- Telegram канал Ильи — парсинг через Bot API или MTProto
-- LinkedIn комменты/реакции на статьи Артура — web_fetch + парсинг
-- Упоминания "Art Looi" / "Артур Арсенов" — Serper/Tavily поиск 1 раз в день
-- Facebook — сложно без API, пока пропустить
+**[Skeptic]:** PocketBase API — no auth token, need to add. Telegram sessions history — not guaranteed to be directly accessible, need to verify endpoint. Better to start with wttr.in + ved + app API as the most reliable.
 
 ---
 
-## 4. Правила тишины (когда НЕ писать)
+## 3. Sources v2 (after stabilizing v1)
+
+- YouTube channels — RSS feed for new videos
+- Telegram channels — parsing via Bot API or MTProto
+- Web mentions — web_fetch + parsing
+- Name mentions — Serper/Tavily search once per day
+- Facebook — difficult without API, skip for now
+
+---
+
+## 4. Silence rules (when NOT to send)
 
 ```python
 SILENCE_RULES = [
-    # Время
-    lambda: 10 <= now_msk.hour < 16,  # рабочий блок
-    lambda: 0 <= now_msk.hour < 8,    # ночь (не критично)
+    # Time
+    lambda: 10 <= now_tz.hour < 16,  # work block
+    lambda: 0 <= now_tz.hour < 8,    # night (non-critical)
 
-    # Уже отправляли сегодня на эту тему
+    # Already sent today on this topic
     lambda signal: signal["key"] in sent_today,
 
-    # Слабый сигнал — нет изменений
+    # Weak signal — no changes
     lambda signal: signal["delta"] == 0 and signal["urgency"] != "critical",
 
-    # Артур активен в диалоге (есть входящее сообщение <30 мин назад)
+    # User is active in conversation (incoming message <30 min ago)
     lambda: last_user_message_age_min < 30,
 ]
 ```
 
-**[Скептик]:** Определение "Артур активен" — нет прямого API. Заглушка: если heartbeat видел активность в последние 30 мин → молчать. Реализовать через `soul/user_last_seen.json` который пишет heartbeat.
+**[Skeptic]:** Determining "user is active" — no direct API. Stub: if heartbeat detected activity in last 30 min → stay silent. Implement via `soul/user_last_seen.json` written by heartbeat.
 
 ---
 
-## 5. Правила порога (что достаточно сильный сигнал)
+## 5. Threshold rules (what constitutes a strong enough signal)
 
 ```python
 THRESHOLDS = {
-    "open_thread_urgent": True,           # urgency == "action_needed" → всегда сигнал
-    "radar_new_registration": 1,          # ≥1 новая регистрация за 24ч
-    "cronbun_subscriber_delta": 5,        # +5 подписчиков за 24ч
-    "weather_warning": ["rain", "storm", "ice"],  # опасная погода
-    "close_person_silent_days": 3,        # Лера/сын не писали >3 дней
-    "close_person_silent_days_son": 7,    # сын не писал >7 дней
+    "open_thread_urgent": True,           # urgency == "action_needed" → always signal
+    "app_new_registration": 1,            # ≥1 new registration in 24h
+    "channel_subscriber_delta": 5,        # +5 subscribers in 24h
+    "weather_warning": ["rain", "storm", "ice"],  # dangerous weather
+    "close_person_silent_days": 3,        # contact hasn't written in >3 days
+    "close_person_silent_days_alt": 7,    # another contact hasn't written in >7 days
 }
 ```
 
-Всё что ниже этих порогов — не отправляем, только логируем в `soul/signals_log.jsonl`.
+Everything below these thresholds — don't send, only log to `soul/signals_log.jsonl`.
 
 ---
 
-## 6. Расписание
+## 6. Schedule
 
 ```cron
-# Soul Daemon — каждый час, кроме ночи
-0 8-23 * * * python3 /home/looi/.openclaw/workspace/soul/soul_collect.py >> /home/looi/.openclaw/workspace/soul/daemon.log 2>&1
+# Soul Daemon — every hour, except night
+0 8-23 * * * python3 /home/user/.openclaw/workspace/soul/soul_collect.py >> /home/user/.openclaw/workspace/soul/daemon.log 2>&1
 ```
 
-**Почему не каждые 30 мин:** большинство источников обновляются раз в несколько часов. Час — разумный баланс между свежестью и шумом. Ночью (00:00-08:00) — не запускаем (кроме critical urgency в ved).
+**Why not every 30 min:** most sources update once every few hours. One hour is a reasonable balance between freshness and noise. At night (00:00-08:00) — don't run (except for critical urgency in ved).
 
 ---
 
-## 7. Хранение состояния
+## 7. State storage
 
-**`soul/sent_log.json`** — что уже отправили:
+**`soul/sent_log.json`** — what was already sent:
 ```json
 {
   "2026-04-03": {
     "sent": [
-      {"key": "radar_registration", "timestamp": "10:15", "summary": "..."},
-      {"key": "lera_silent", "timestamp": "19:00", "summary": "..."}
+      {"key": "app_registration", "timestamp": "10:15", "summary": "..."},
+      {"key": "contact_silent", "timestamp": "19:00", "summary": "..."}
     ]
   }
 }
 ```
 
-**`soul/signals_latest.json`** — последний срез данных (перезаписывается каждый раз):
+**`soul/signals_latest.json`** — latest data snapshot (overwritten each time):
 ```json
 {
   "timestamp": "2026-04-03T15:00:00",
   "open_threads_urgent": 2,
-  "radar_registrations_24h": 3,
-  "cronbun_delta": 0,
-  "weather_moscow": {"temp": 12, "desc": "Облачно"},
-  "weather_volzhsky": {"temp": 18, "desc": "Ясно"},
-  "lera_last_message_hours_ago": 6,
-  "son_last_message_hours_ago": 72
+  "app_registrations_24h": 3,
+  "channel_delta": 0,
+  "weather_city_a": {"temp": 12, "desc": "Cloudy"},
+  "weather_city_b": {"temp": 18, "desc": "Clear"},
+  "contact_a_last_message_hours_ago": 6,
+  "contact_b_last_message_hours_ago": 72
 }
 ```
 
-**`soul/signals_prev.json`** — предыдущий срез для подсчёта delta.
+**`soul/signals_prev.json`** — previous snapshot for computing deltas.
 
-**`soul/signals_log.jsonl`** — все срезы для отладки и анализа.
+**`soul/signals_log.jsonl`** — all snapshots for debugging and analysis.
 
 ---
 
-## 8. Token cost оценка
+## 8. Token cost estimate
 
-| Сценарий | Токены | Стоимость |
+| Scenario | Tokens | Cost |
 |---|---|---|
-| Нет сигнала (только Python) | 0 | $0 |
-| Есть сигнал → g-flash синтез | ~800 in + ~300 out | ~$0.0005 |
-| **1 день активный (3-4 сигнала)** | ~4400 | **~$0.002** |
-| **1 день тихий (0-1 сигнал)** | ~800 | **~$0.0004** |
+| No signal (Python only) | 0 | $0 |
+| Signal present → g-flash synthesis | ~800 in + ~300 out | ~$0.0005 |
+| **1 active day (3-4 signals)** | ~4400 | **~$0.002** |
+| **1 quiet day (0-1 signal)** | ~800 | **~$0.0004** |
 
-Это на порядок дешевле heartbeat. Основная экономия: сбор и фильтрация без LLM.
+This is an order of magnitude cheaper than heartbeat. Main savings: collection and filtering without LLM.
 
 ---
 
-## 9. v1 план — что реализовать первым
+## 9. v1 plan — what to implement first
 
-**Неделя 1 — только сбор и тишина:**
+**Week 1 — collection and silence only:**
 ```python
 # soul/soul_collect.py
 import json, requests, datetime
 
-WORKSPACE = "/home/looi/.openclaw/workspace"
+WORKSPACE = "/home/user/.openclaw/workspace"
 
 def collect():
     signals = {}
@@ -176,8 +176,8 @@ def collect():
     signals["open_threads_urgent"] = len(urgent)
     signals["open_threads_urgent_titles"] = [t.get("title") for t in urgent]
 
-    # 2. Погода
-    for city, name in [("Moscow", "moscow"), ("Volzhsky", "volzhsky")]:
+    # 2. Weather
+    for city, name in [("CityA", "city_a"), ("CityB", "city_b")]:
         r = requests.get(f"https://wttr.in/{city}?format=j1", timeout=5)
         if r.ok:
             w = r.json()["current_condition"][0]
@@ -186,7 +186,7 @@ def collect():
                 "desc": w["weatherDesc"][0]["value"]
             }
 
-    # 3. Сохранить
+    # 3. Save
     prev_path = f"{WORKSPACE}/soul/signals_latest.json"
     if os.path.exists(prev_path):
         import shutil
@@ -202,19 +202,19 @@ if __name__ == "__main__":
     collect()
 ```
 
-**Неделя 2:** добавить soul_decide.py + правила тишины + первый LLM синтез (g-flash).
-**Неделя 3:** подключить radar PocketBase API + Telegram sessions для Леры/сына.
+**Week 2:** add soul_decide.py + silence rules + first LLM synthesis (g-flash).
+**Week 3:** connect PocketBase API + Telegram sessions for close contacts.
 
 ---
 
-## Риски (Скептик, финальное слово)
+## Risks (Skeptic, final word)
 
-1. **Telegram sessions** — нет прямого API для чтения диалогов с конкретными людьми. Нужен MTProto или специальный endpoint. Без этого — Лера/сын остаются вне v1.
-2. **CronBun stats** — нет публичного API для delta подписчиков. Нужно кастомное решение.
-3. **Drift порогов** — через месяц "3 новые регистрации" может быть нормой, а не сигналом. Пороги нужно пересматривать вручную раз в месяц.
-4. **Шум от погоды** — "Облачно в Волжском" не является сигналом. Фильтровать только экстремальные условия.
-5. **LLM галлюцинация** — g-flash может "додумать" интерпретацию. Давать ему только сырые факты, не просить интерпретировать намерения людей.
+1. **Telegram sessions** — no direct API for reading conversations with specific people. Need MTProto or a special endpoint. Without this — close contacts remain outside v1.
+2. **Channel stats** — no public API for subscriber delta. Need a custom solution.
+3. **Threshold drift** — in a month "3 new registrations" might be the norm, not a signal. Thresholds need manual review once a month.
+4. **Weather noise** — "Cloudy in CityB" is not a signal. Filter only extreme conditions.
+5. **LLM hallucination** — g-flash might "imagine" an interpretation. Give it only raw facts, don't ask it to interpret people's intentions.
 
 ---
 
-*Создан: 2026-04-03. Автор: Клин + Совет (Скептик/Практик/Архитектор).*
+*Created: 2026-04-03. Author: the agent + Council (Skeptic/Practitioner/Architect).*

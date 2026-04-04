@@ -1,7 +1,7 @@
 #!/bin/bash
-# Soul Daemon runner — запускает полную цепочку collect → decide → notify
+# Soul Daemon runner — runs the full chain: collect → decide → notify
 set -e
-WORKSPACE="/home/looi/.openclaw/workspace"
+WORKSPACE="${SOUL_WORKSPACE:-/home/user/.openclaw/workspace}"
 LOG="$WORKSPACE/soul/daemon.log"
 timestamp=$(date '+%Y-%m-%d %H:%M:%S')
 
