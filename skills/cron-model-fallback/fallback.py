@@ -28,7 +28,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional, Tuple
 
 # --- Constants ---
 DEFAULT_TIMEOUT_SEC = 120
@@ -68,7 +68,7 @@ def load_token(config: dict) -> Optional[str]:
     return None
 
 
-def load_default_models(config: dict) -> list[str]:
+def load_default_models(config: dict) -> List[str]:
     """Read default fallback chain from openclaw.json → cron.fallbackModels."""
     models = config.get("cron", {}).get("fallbackModels", [])
     if isinstance(models, list):
@@ -94,7 +94,7 @@ def resolve_gateway_url(config: dict) -> str:
 def try_model(
     model: str,
     prompt: str,
-    token: str,
+    token: Optional[str],
     gateway_url: str,
     timeout_sec: int,
     quiet: bool,
@@ -115,10 +115,9 @@ def try_model(
         "messages": [{"role": "user", "content": prompt}],
     }).encode("utf-8")
 
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {token}",
-    }
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
 
     try:
         req = urllib.request.Request(
@@ -170,13 +169,13 @@ def try_model(
 # ---------------------------------------------------------------------------
 
 def run_with_fallback(
-    models: list[str],
+    models: List[str],
     prompt: str,
-    token: str,
+    token: Optional[str],
     gateway_url: str,
     timeout_sec: int,
     quiet: bool,
-) -> tuple[Optional[str], str, int]:
+) -> Tuple[Optional[str], str, int]:
     """Try each model in order. Return (text, winning_model, attempts)."""
     if not quiet:
         print(f"\n[fallback] {len(models)} model(s): {', '.join(models)}", file=sys.stderr)
@@ -235,9 +234,8 @@ Configuration (openclaw.json):
 
     # Auth
     token = load_token(config)
-    if not token:
-        print(f"ERROR: No token. Set {TOKEN_ENV_VAR} or gateway.auth.token in config", file=sys.stderr)
-        return EXIT_CONFIG_ERROR
+    if not token and not args.quiet:
+        print(f"WARNING: No token found ({TOKEN_ENV_VAR} / config). Trying without auth.", file=sys.stderr)
 
     # Gateway
     gateway_url = resolve_gateway_url(config)
