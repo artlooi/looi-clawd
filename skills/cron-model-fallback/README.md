@@ -45,7 +45,7 @@ python3 fallback.py \
 Set your OpenClaw token:
 
 ```bash
-export OPENCLAW_TOKEN="***"
+export OPENCLAW_TOKEN="your-token-here"
 # Or store in ~/.openclaw/openclaw.json as gateway.auth.token
 ```
 
@@ -59,7 +59,7 @@ The script uses two strategies to check model reachability:
 
 Once a reachable model is found, the task runs via:
 ```bash
-openclaw agent --message "{prompt}" --agent your-agent --json
+openclaw agent --message "{prompt}" --agent klin --json
 ```
 
 ## Use in OpenClaw Cron Jobs
@@ -67,7 +67,7 @@ openclaw agent --message "{prompt}" --agent your-agent --json
 ```json
 {
   "name": "Nightly Research",
-  "schedule": {"kind": "cron", "expr": "0 2 * * *", "tz": "YOUR_TIMEZONE"},
+  "schedule": {"kind": "cron", "expr": "0 2 * * *", "tz": "Europe/Moscow"},
   "payload": {
     "kind": "agentTurn",
     "message": "python3 /path/to/fallback.py --models 'custom-YOUR-OLLAMA-11434/gemma3:27b,google/gemini-2.5-flash' --prompt 'Your research task'"

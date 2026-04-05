@@ -1,0 +1,221 @@
+name: Quality Gates
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  # Gate 1: Static analysis (fast, no LLM)
+  static:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install tools
+        run: pip install ruff pyright
+
+      - name: Lint (ruff)
+        run: ruff check . --output-format=github
+
+      - name: Format check (ruff)
+        run: ruff format --check .
+
+      - name: Type check (pyright)
+        run: pyright --outputjson || true
+        continue-on-error: true
+
+  # Gate 2: Security scan (no LLM)
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan for secrets (trufflehog)
+        uses: trufflesecurity/trufflehog@main
+        with:
+          extra_args: --only-verified
+
+      - name: Scan for hardcoded IPs/paths
+        run: |
+          echo "=== Checking for private IPs ==="
+          if grep -rn '192\.168\.\|10\.\d\+\.\d\+\.\|172\.1[6-9]\.\|172\.2[0-9]\.\|172\.3[0-1]\.' \
+            --include='*.py' --include='*.sh' --include='*.md' .; then
+            echo "::error::Found hardcoded private IP addresses"
+            exit 1
+          fi
+
+          echo "=== Checking for hardcoded home paths ==="
+          if grep -rn '/home/[a-z]' --include='*.py' --include='*.sh' . | grep -v '/home/runner' | grep -v '#.*example'; then
+            echo "::error::Found hardcoded home directory paths"
+            exit 1
+          fi
+
+          echo "=== Checking for API keys in URLs ==="
+          if grep -rn 'key=\${\|key=.*API\|apikey=' --include='*.py' . | grep -v 'header' | grep -v '#'; then
+            echo "::warning::Possible API key in URL parameter (prefer headers)"
+          fi
+
+          echo "All security checks passed"
+
+  # Gate 3: Functional verification (the gate we missed)
+  functional:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          find . -name 'requirements.txt' -exec pip install -r {} \;
+          pip install pytest
+
+      - name: Run tests
+        run: |
+          if find . -name 'test_*.py' -o -name '*_test.py' | grep -q .; then
+            pytest -q
+          else
+            echo "::warning::No tests found"
+          fi
+
+      - name: Verify imports and syntax
+        run: |
+          find . -name '*.py' | while read f; do
+            python -c "import ast; ast.parse(open('$f').read())" 2>&1 || {
+              echo "::error file=$f::Syntax error"
+              exit 1
+            }
+          done
+
+      - name: Check parameter usage (dead params)
+        run: |
+          python3 << 'EOF'
+          import ast, sys, os
+
+          issues = []
+          for root, dirs, files in os.walk('.'):
+              for fname in files:
+                  if not fname.endswith('.py'):
+                      continue
+                  path = os.path.join(root, fname)
+                  try:
+                      tree = ast.parse(open(path).read())
+                  except:
+                      continue
+                  for node in ast.walk(tree):
+                      if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                          params = {a.arg for a in node.args.args if a.arg != 'self'}
+                          params |= {a.arg for a in node.args.kwonlyargs}
+                          body_src = ast.dump(node)
+                          unused = [p for p in params if body_src.count(f"'{p}'") <= 1 and p != 'kwargs' and p != 'args']
+                          # Heuristic: if param name appears only in signature, flag it
+                          for p in unused:
+                              func_src = ast.get_source_segment(open(path).read(), node) or ''
+                              # Count appearances excluding the def line
+                              lines = func_src.split('\n')[1:]
+                              if not any(p in line for line in lines):
+                                  issues.append(f"{path}:{node.lineno} — '{p}' in {node.name}() is unused")
+
+          if issues:
+              print("::warning::Potentially unused function parameters:")
+              for i in issues[:20]:
+                  print(f"  {i}")
+          else:
+              print("No unused parameters detected")
+          EOF
+
+  # Gate 4: Documentation consistency
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check docs match code
+        run: |
+          python3 << 'EOF'
+          import os, re
+
+          issues = []
+
+          # Check all README/SKILL.md files
+          for root, dirs, files in os.walk('.'):
+              readme = None
+              code_files = []
+              for f in files:
+                  if f in ('README.md', 'SKILL.md'):
+                      readme = os.path.join(root, f)
+                  if f.endswith('.py'):
+                      code_files.append(os.path.join(root, f))
+
+              if not readme or not code_files:
+                  continue
+
+              doc_content = open(readme).read()
+
+              for cf in code_files:
+                  code = open(cf).read()
+
+                  # Check: default values in docs match code
+                  doc_defaults = re.findall(r'default[:\s]+[`"]?([0-9.]+)', doc_content, re.IGNORECASE)
+                  code_defaults = re.findall(r'default[=:\s]+([0-9.]+)', code)
+
+                  # Check: if docs mention percentages, verify they match code weights
+                  doc_percents = re.findall(r'(\d+)%\s*(?:vector|lexical|semantic)', doc_content, re.IGNORECASE)
+                  code_weights = re.findall(r'([0-9.]+)\s*\*\s*(?:v|vec|lex|l)\b', code)
+
+                  if doc_percents and code_weights:
+                      doc_ratios = [int(p)/100 for p in doc_percents[:2]]
+                      code_ratios = [float(w) for w in code_weights[:2]]
+                      for d, c in zip(sorted(doc_ratios, reverse=True), sorted(code_ratios, reverse=True)):
+                          if abs(d - c) > 0.05:
+                              issues.append(f"{readme}: docs say {int(d*100)}% but code uses {c}")
+
+          if issues:
+              for i in issues:
+                  print(f"::error::{i}")
+              exit(1)
+          else:
+              print("Documentation consistency checks passed")
+          EOF
+
+      - name: Verify SKILL.md frontmatter
+        run: |
+          find . -name 'SKILL.md' | while read f; do
+            if ! head -1 "$f" | grep -q '^---'; then
+              echo "::error file=$f::SKILL.md missing YAML frontmatter"
+              exit 1
+            fi
+            if ! grep -q '^name:' "$f"; then
+              echo "::error file=$f::SKILL.md missing 'name' field"
+              exit 1
+            fi
+            if ! grep -q '^description:' "$f"; then
+              echo "::error file=$f::SKILL.md missing 'description' field"
+              exit 1
+            fi
+          done
+          echo "All SKILL.md files have valid frontmatter"
+
+      - name: Check copyright headers
+        run: |
+          find . -name '*.py' | while read f; do
+            if ! head -5 "$f" | grep -qi 'copyright\|license\|looi.ru'; then
+              echo "::warning file=$f::Missing copyright/license header"
+            fi
+          done
