@@ -29,7 +29,7 @@ import shutil
 
 # --- Configuration ---
 # Override these via environment variables or edit directly
-WORKSPACE = os.environ.get("SOUL_WORKSPACE", "/home/user/.openclaw/workspace")
+WORKSPACE = os.environ.get("SOUL_WORKSPACE", "/home/user/.openclaw/workspace")  # example default, override via env
 SOUL_DIR = f"{WORKSPACE}/soul"
 VED_STATE_PATH = f"{WORKSPACE}/ved/state.json"
 SIGNALS_LATEST_PATH = f"{SOUL_DIR}/signals_latest.json"

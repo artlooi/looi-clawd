@@ -273,7 +273,7 @@ def search(query: str, top_k: int = 5):
         print("Vector DB not found. Run build_vector_index.py first.")
         sys.exit(1)
 
-    print(f"Embedding query...")
+    print("Embedding query...")
     emb = get_embedding([query])[0]
 
     conn = sqlite3.connect(str(VEC_DB))

@@ -23,7 +23,6 @@ Output format (stdout JSON):
 import json
 import os
 import datetime
-import sys
 
 # Timezone handling: prefer zoneinfo (Python 3.9+), fall back to fixed UTC+3
 try:
@@ -33,7 +32,7 @@ except ImportError:
     from datetime import timezone, timedelta
     TZ = timezone(timedelta(hours=3))
 
-WORKSPACE = os.environ.get("SOUL_WORKSPACE", "/home/user/.openclaw/workspace")
+WORKSPACE = os.environ.get("SOUL_WORKSPACE", "/home/user/.openclaw/workspace")  # example default, override via env
 SOUL_DIR = f"{WORKSPACE}/soul"
 
 # ---------------------------------------------------------------------------
