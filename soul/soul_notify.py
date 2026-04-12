@@ -21,18 +21,22 @@ Data flow:
 Configuration:
     SOUL_TARGET_TOPIC env var controls which messaging topic receives alerts.
 """
+
 import json
 import sys
 import os
 import datetime
 
-WORKSPACE = os.environ.get("SOUL_WORKSPACE", "/home/user/.openclaw/workspace")  # example default, override via env
+WORKSPACE = os.environ.get(
+    "SOUL_WORKSPACE", "/home/user/.openclaw/workspace"
+)  # example default, override via env
 SOUL_DIR = f"{WORKSPACE}/soul"
 
 
 # ---------------------------------------------------------------------------
 # Sent log management
 # ---------------------------------------------------------------------------
+
 
 def update_sent_log(signals):
     """
@@ -56,11 +60,13 @@ def update_sent_log(signals):
         log[today] = {"sent": []}
 
     for sig in signals:
-        log[today]["sent"].append({
-            "key": sig["key"],
-            "timestamp": datetime.datetime.now().strftime("%H:%M"),
-            "label": sig.get("label", "")
-        })
+        log[today]["sent"].append(
+            {
+                "key": sig["key"],
+                "timestamp": datetime.datetime.now().strftime("%H:%M"),
+                "label": sig.get("label", ""),
+            }
+        )
 
     with open(log_path, "w") as f:
         json.dump(log, f, ensure_ascii=False, indent=2)
@@ -69,6 +75,7 @@ def update_sent_log(signals):
 # ---------------------------------------------------------------------------
 # Main notification logic
 # ---------------------------------------------------------------------------
+
 
 def notify():
     """
@@ -106,7 +113,7 @@ Keep it brief, 3-5 sentences. No fluff. Speak as a partner, not as a notificatio
         "prompt": prompt,
         "signals": signals,
         "target_topic": os.environ.get("SOUL_TARGET_TOPIC", "PERSONAL_TOPIC"),
-        "status": "pending"
+        "status": "pending",
     }
 
     pending_path = f"{SOUL_DIR}/pending_notify.json"
