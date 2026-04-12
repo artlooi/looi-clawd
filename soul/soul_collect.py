@@ -29,7 +29,9 @@ import shutil
 
 # --- Configuration ---
 # Override these via environment variables or edit directly
-WORKSPACE = os.environ.get("SOUL_WORKSPACE", "/home/user/.openclaw/workspace")
+WORKSPACE = os.environ.get(
+    "SOUL_WORKSPACE", os.path.expanduser("~/.openclaw/workspace")
+)
 SOUL_DIR = f"{WORKSPACE}/soul"
 VED_STATE_PATH = f"{WORKSPACE}/ved/state.json"
 SIGNALS_LATEST_PATH = f"{SOUL_DIR}/signals_latest.json"
@@ -47,17 +49,19 @@ WEATHER_CITIES = {
 # PocketBase API endpoint — replace with your own
 POCKETBASE_URL = os.environ.get(
     "SOUL_POCKETBASE_URL",
-    "http://YOUR_SERVER_IP:8090/api/collections/app_content/records?perPage=5&sort=-created"
+    "http://YOUR_SERVER_IP:8090/api/collections/app_content/records?perPage=5&sort=-created",
 )
 
 # ---------------------------------------------------------------------------
 # Directory and state initialization
 # ---------------------------------------------------------------------------
 
+
 def ensure_dirs():
     """Create workspace directories if they don't exist."""
     os.makedirs(SOUL_DIR, exist_ok=True)
     os.makedirs(os.path.dirname(VED_STATE_PATH), exist_ok=True)
+
 
 def create_dummy_ved_state():
     """Create a sample ved/state.json if none exists, for first-run testing."""
@@ -66,16 +70,18 @@ def create_dummy_ved_state():
             "open_threads": [
                 {"title": "Urgent task 1", "urgency": "action_needed"},
                 {"title": "Urgent task 2", "urgency": "action_needed"},
-                {"title": "Non-urgent task", "urgency": "info"}
+                {"title": "Non-urgent task", "urgency": "info"},
             ]
         }
         with open(VED_STATE_PATH, "w") as f:
             json.dump(dummy_data, f, ensure_ascii=False, indent=2)
         print(f"Created dummy {VED_STATE_PATH}")
 
+
 # ---------------------------------------------------------------------------
 # Main collection logic
 # ---------------------------------------------------------------------------
+
 
 def collect():
     """
@@ -103,7 +109,11 @@ def collect():
     try:
         with open(VED_STATE_PATH, "r") as f:
             ved = json.load(f)
-        urgent = [t for t in ved.get("open_threads", []) if t.get("urgency") == "action_needed"]
+        urgent = [
+            t
+            for t in ved.get("open_threads", [])
+            if t.get("urgency") == "action_needed"
+        ]
         signals["open_threads_urgent"] = len(urgent)
         signals["open_threads_urgent_titles"] = [t.get("title") for t in urgent]
     except Exception as e:
@@ -120,7 +130,7 @@ def collect():
                 w = r.json()["current_condition"][0]
                 signals[f"weather_{key_name}"] = {
                     "temp": w["temp_C"],
-                    "desc": w["weatherDesc"][0]["value"]
+                    "desc": w["weatherDesc"][0]["value"],
                 }
             else:
                 print(f"Error fetching weather for {city_query}: {r.status_code}")
@@ -139,7 +149,9 @@ def collect():
             for record in records:
                 created_at_str = record.get("created")
                 if created_at_str:
-                    created_at = datetime.datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+                    created_at = datetime.datetime.fromisoformat(
+                        created_at_str.replace("Z", "+00:00")
+                    )
                     if created_at > time_24h_ago:
                         last_24h_registrations += 1
             signals["app_registrations_24h"] = last_24h_registrations
@@ -182,8 +194,11 @@ def collect():
     print(f"Soul Daemon collected signals at {signals['timestamp']}:")
     print(f"  Urgent threads: {signals['open_threads_urgent']}")
     for key_name, city_query in WEATHER_CITIES.items():
-        print(f"  {city_query} weather: {signals.get(f'weather_{key_name}', {}).get('temp', 'N/A')}C, {signals.get(f'weather_{key_name}', {}).get('desc', 'N/A')}")
+        print(
+            f"  {city_query} weather: {signals.get(f'weather_{key_name}', {}).get('temp', 'N/A')}C, {signals.get(f'weather_{key_name}', {}).get('desc', 'N/A')}"
+        )
     print(f"  New app registrations (24h): {signals['app_registrations_24h']}")
+
 
 if __name__ == "__main__":
     collect()

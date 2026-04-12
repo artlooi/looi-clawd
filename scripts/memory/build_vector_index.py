@@ -28,14 +28,16 @@ GOOGLE_EMBED_MODEL = "models/gemini-embedding-2-preview"
 GOOGLE_EMBED_DIMS = 3072
 LCM_DB = Path.home() / ".openclaw/lcm.db"
 VEC_DB = Path.home() / ".openclaw/memory/chat_vectors.db"
-CHUNK_SIZE = 600       # chars per chunk
-CHUNK_OVERLAP = 100    # overlap between chunks
-BATCH_SIZE = 20        # texts per API batch (Google batchEmbedContents)
+CHUNK_SIZE = 600  # chars per chunk
+CHUNK_OVERLAP = 100  # overlap between chunks
+BATCH_SIZE = 20  # texts per API batch (Google batchEmbedContents)
+
 
 def _get_google_api_key() -> str:
     cfg_path = Path.home() / ".openclaw/openclaw.json"
     cfg = json.loads(cfg_path.read_text())
     return cfg["env"]["vars"]["GOOGLE_AI_API_KEY"]
+
 
 def _google_available() -> bool:
     try:
@@ -44,6 +46,7 @@ def _google_available() -> bool:
     except Exception:
         return False
 
+
 def ollama_available() -> bool:
     """Check if Ollama is reachable."""
     try:
@@ -51,6 +54,7 @@ def ollama_available() -> bool:
         return True
     except Exception:
         return False
+
 
 def get_embedding(texts: list[str]) -> list[list[float]]:
     """Get embeddings. Primary: Google gemini-embedding-2-preview. Fallback: Ollama.
@@ -62,14 +66,20 @@ def get_embedding(texts: list[str]) -> list[list[float]]:
         try:
             return _google_embed(texts)
         except Exception as exc:
-            print(f"WARNING: Google embedding failed ({exc}), trying Ollama fallback", file=sys.stderr)
+            print(
+                f"WARNING: Google embedding failed ({exc}), trying Ollama fallback",
+                file=sys.stderr,
+            )
             if ollama_available():
                 return _ollama_embed(texts)
             raise RuntimeError(f"Google failed ({exc}) and Ollama unreachable") from exc
     elif ollama_available():
         return _ollama_embed(texts)
     else:
-        raise RuntimeError("No embedding provider available (Google API key missing, Ollama unreachable)")
+        raise RuntimeError(
+            "No embedding provider available (Google API key missing, Ollama unreachable)"
+        )
+
 
 def _google_embed(texts: list[str]) -> list[list[float]]:
     """Batch embed via Google gemini-embedding-2-preview."""
@@ -80,13 +90,18 @@ def _google_embed(texts: list[str]) -> list[list[float]]:
         for t in texts
     ]
     payload = json.dumps({"requests": requests}).encode()
-    req = urllib.request.Request(url, data=payload, headers={
-        "Content-Type": "application/json",
-        "x-goog-api-key": key,
-    })
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "x-goog-api-key": key,
+        },
+    )
     with urllib.request.urlopen(req, timeout=60) as resp:
         result = json.loads(resp.read())
     return [e["values"] for e in result["embeddings"]]
+
 
 def _ollama_embed(texts: list[str]) -> list[list[float]]:
     """Fallback: embed via Ollama nomic-embed-text."""
@@ -95,24 +110,28 @@ def _ollama_embed(texts: list[str]) -> list[list[float]]:
         f"{OLLAMA_HOST}/api/embed",
         data=payload,
         headers={"Content-Type": "application/json"},
-        method="POST"
+        method="POST",
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         result = json.loads(resp.read())
     return result["embeddings"]
 
+
 def cosine_sim(a: list[float], b: list[float]) -> float:
-    dot = sum(x*y for x,y in zip(a,b))
-    na = math.sqrt(sum(x*x for x in a))
-    nb = math.sqrt(sum(x*x for x in b))
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(x * x for x in b))
     return dot / (na * nb) if na and nb else 0.0
+
 
 def pack_vector(vec: list[float]) -> bytes:
     return struct.pack(f"{len(vec)}f", *vec)
 
+
 def unpack_vector(blob: bytes) -> list[float]:
     n = len(blob) // 4
     return list(struct.unpack(f"{n}f", blob))
+
 
 def chunk_text(text: str) -> list[str]:
     if len(text) <= CHUNK_SIZE:
@@ -124,6 +143,7 @@ def chunk_text(text: str) -> list[str]:
         chunks.append(text[start:end])
         start += CHUNK_SIZE - CHUNK_OVERLAP
     return chunks
+
 
 def init_vec_db(conn):
     conn.execute("""
@@ -143,9 +163,11 @@ def init_vec_db(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_conv ON chunks(conv_id)")
     conn.commit()
 
+
 def get_indexed_message_ids(vec_conn) -> set:
     rows = vec_conn.execute("SELECT DISTINCT message_id FROM chunks").fetchall()
     return {r[0] for r in rows}
+
 
 def load_messages(lcm_conn, skip_ids: set) -> list[dict]:
     rows = lcm_conn.execute("""
@@ -164,14 +186,17 @@ def load_messages(lcm_conn, skip_ids: set) -> list[dict]:
         # skip session startup boilerplate
         if content.startswith("A new session was started via /new"):
             continue
-        result.append({
-            "message_id": msg_id,
-            "conv_id": conv_id,
-            "role": role,
-            "content": content.strip(),
-            "created_at": created_at,
-        })
+        result.append(
+            {
+                "message_id": msg_id,
+                "conv_id": conv_id,
+                "role": role,
+                "content": content.strip(),
+                "created_at": created_at,
+            }
+        )
     return result
+
 
 def build_index(update_only=False):
     if not _google_available() and not ollama_available():
@@ -198,21 +223,23 @@ def build_index(update_only=False):
     all_chunks = []
     for msg in messages:
         for i, chunk_text_val in enumerate(chunk_text(msg["content"])):
-            all_chunks.append({
-                "message_id": msg["message_id"],
-                "conv_id": msg["conv_id"],
-                "role": msg["role"],
-                "chunk_index": i,
-                "text": chunk_text_val,
-                "created_at": msg.get("created_at"),
-            })
+            all_chunks.append(
+                {
+                    "message_id": msg["message_id"],
+                    "conv_id": msg["conv_id"],
+                    "role": msg["role"],
+                    "chunk_index": i,
+                    "text": chunk_text_val,
+                    "created_at": msg.get("created_at"),
+                }
+            )
 
     total = len(all_chunks)
     print(f"Indexing {total} chunks from {len(messages)} messages...")
 
     indexed = 0
     for batch_start in range(0, total, BATCH_SIZE):
-        batch = all_chunks[batch_start:batch_start + BATCH_SIZE]
+        batch = all_chunks[batch_start : batch_start + BATCH_SIZE]
         texts = [c["text"] for c in batch]
         try:
             embeddings = get_embedding(texts)
@@ -223,21 +250,26 @@ def build_index(update_only=False):
 
         rows = []
         for chunk, emb in zip(batch, embeddings):
-            rows.append((
-                chunk["message_id"],
-                chunk["conv_id"],
-                chunk["role"],
-                chunk["chunk_index"],
-                chunk["text"],
-                chunk["created_at"],
-                pack_vector(emb),
-            ))
+            rows.append(
+                (
+                    chunk["message_id"],
+                    chunk["conv_id"],
+                    chunk["role"],
+                    chunk["chunk_index"],
+                    chunk["text"],
+                    chunk["created_at"],
+                    pack_vector(emb),
+                )
+            )
 
-        vec_conn.executemany("""
+        vec_conn.executemany(
+            """
             INSERT OR IGNORE INTO chunks
               (message_id, conv_id, role, chunk_index, text, created_at, embedding)
             VALUES (?,?,?,?,?,?,?)
-        """, rows)
+        """,
+            rows,
+        )
         vec_conn.commit()
         indexed += len(batch)
 
@@ -250,15 +282,19 @@ def build_index(update_only=False):
 
 RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
 
+
 def rerank(query: str, candidates: list, top_k: int) -> list:
     """Rerank candidates using CrossEncoder. Returns top_k sorted by relevance."""
     try:
         import torch
         from sentence_transformers import CrossEncoder
+
         model = CrossEncoder(RERANKER_MODEL, activation_fn=torch.nn.Sigmoid())
         pairs = [(query, c[4]) for c in candidates]  # (query, text)
         scores = model.predict(pairs)
-        ranked = sorted(zip(scores, candidates), key=lambda x: float(x[0]), reverse=True)
+        ranked = sorted(
+            zip(scores, candidates), key=lambda x: float(x[0]), reverse=True
+        )
         return [c for _, c in ranked[:top_k]]
     except ImportError:
         # sentence-transformers not installed — skip reranking
@@ -273,7 +309,7 @@ def search(query: str, top_k: int = 5):
         print("Vector DB not found. Run build_vector_index.py first.")
         sys.exit(1)
 
-    print(f"Embedding query...")
+    print("Embedding query...")
     emb = get_embedding([query])[0]
 
     conn = sqlite3.connect(str(VEC_DB))
@@ -293,19 +329,19 @@ def search(query: str, top_k: int = 5):
     # Set SEARCH_HISTORY_RERANK=1 to enable slower CrossEncoder reranking.
     use_rerank = os.getenv("SEARCH_HISTORY_RERANK", "0") == "1"
     if use_rerank:
-        candidates = scored[:top_k * 4]
+        candidates = scored[: top_k * 4]
         top = rerank(query, candidates, top_k)
         mode_label = "vector→rerank"
     else:
         top = scored[:top_k]
         mode_label = "vector-only"
 
-    print(f"\n🔍 Top {top_k} results for: \"{query}\" ({mode_label})\n")
+    print(f'\n🔍 Top {top_k} results for: "{query}" ({mode_label})\n')
     for item in top:
         score, msg_id, conv_id, role, text, created_at = item
         date = (created_at or "")[:10]
         print(f"[{float(score):.3f}] msg:{msg_id} conv:{conv_id} {role} {date}")
-        print(f"  {text[:200].replace(chr(10),' ')}")
+        print(f"  {text[:200].replace(chr(10), ' ')}")
         print()
 
 

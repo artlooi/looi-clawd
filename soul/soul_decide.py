@@ -20,20 +20,24 @@ Output format (stdout JSON):
     {"should_send": true, "signals": [...], "reason": "..."}
     {"should_send": false, "reason": "night silence 00-08"}
 """
+
 import json
 import os
 import datetime
-import sys
 
 # Timezone handling: prefer zoneinfo (Python 3.9+), fall back to fixed UTC+3
 try:
     import zoneinfo
+
     TZ = zoneinfo.ZoneInfo(os.environ.get("SOUL_TIMEZONE", "YOUR_TIMEZONE"))
 except ImportError:
     from datetime import timezone, timedelta
+
     TZ = timezone(timedelta(hours=3))
 
-WORKSPACE = os.environ.get("SOUL_WORKSPACE", "/home/user/.openclaw/workspace")
+WORKSPACE = os.environ.get(
+    "SOUL_WORKSPACE", os.path.expanduser("~/.openclaw/workspace")
+)
 SOUL_DIR = f"{WORKSPACE}/soul"
 
 # ---------------------------------------------------------------------------
@@ -56,6 +60,7 @@ WEATHER_WARNINGS = ["storm", "thunder", "blizzard", "ice", "freezing", "fog"]
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def load_json(path):
     """Load a JSON file, returning empty dict if missing."""
     if not os.path.exists(path):
@@ -74,6 +79,7 @@ def already_sent_today(sent_log, key):
 # ---------------------------------------------------------------------------
 # Main decision logic
 # ---------------------------------------------------------------------------
+
 
 def decide():
     """
@@ -104,26 +110,34 @@ def decide():
         key = "urgent_threads"
         if not night_silence and not already_sent_today(sent_log, key):
             titles = signals.get("open_threads_urgent_titles", [])
-            active_signals.append({
-                "key": key,
-                "type": "urgent_thread",
-                "value": urgent_count,
-                "detail": titles[:3],
-                "label": f"{urgent_count} tasks require action"
-            })
+            active_signals.append(
+                {
+                    "key": key,
+                    "type": "urgent_thread",
+                    "value": urgent_count,
+                    "detail": titles[:3],
+                    "label": f"{urgent_count} tasks require action",
+                }
+            )
 
     # --- Rule 2: App registrations ---
     # Non-urgent: respects both night and work silence windows
     app_regs = signals.get("app_registrations_24h", 0)
     if app_regs >= THRESHOLDS["app_new_registration"]:
         key = "app_registration"
-        if not night_silence and not work_silence and not already_sent_today(sent_log, key):
-            active_signals.append({
-                "key": key,
-                "type": "app",
-                "value": app_regs,
-                "label": f"{app_regs} new registrations on your-app.example.com in 24h"
-            })
+        if (
+            not night_silence
+            and not work_silence
+            and not already_sent_today(sent_log, key)
+        ):
+            active_signals.append(
+                {
+                    "key": key,
+                    "type": "app",
+                    "value": app_regs,
+                    "label": f"{app_regs} new registrations on your-app.example.com in 24h",
+                }
+            )
 
     # --- Rule 3: Weather warnings ---
     # Check each city's weather description for dangerous conditions
@@ -132,13 +146,19 @@ def decide():
         desc = w.get("desc", "").lower()
         if any(warn in desc for warn in WEATHER_WARNINGS):
             key = f"weather_{city}_warning"
-            if not night_silence and not work_silence and not already_sent_today(sent_log, key):
-                active_signals.append({
-                    "key": key,
-                    "type": "weather",
-                    "value": desc,
-                    "label": f"Dangerous weather in {city}: {w.get('desc')}, {w.get('temp')}C"
-                })
+            if (
+                not night_silence
+                and not work_silence
+                and not already_sent_today(sent_log, key)
+            ):
+                active_signals.append(
+                    {
+                        "key": key,
+                        "type": "weather",
+                        "value": desc,
+                        "label": f"Dangerous weather in {city}: {w.get('desc')}, {w.get('temp')}C",
+                    }
+                )
 
     # --- Rule 4: Monitored contacts silence detection ---
     # Alert if a tracked contact hasn't messaged beyond the threshold
@@ -149,13 +169,19 @@ def decide():
         hours_ago = signals.get(field)
         if hours_ago and hours_ago >= THRESHOLDS["monitored_contact_silent_hours"]:
             key = f"{person}_silent"
-            if not night_silence and not work_silence and not already_sent_today(sent_log, key):
-                active_signals.append({
-                    "key": key,
-                    "type": "monitored_contact",
-                    "value": hours_ago,
-                    "label": f"{label} hasn't written in {hours_ago}h"
-                })
+            if (
+                not night_silence
+                and not work_silence
+                and not already_sent_today(sent_log, key)
+            ):
+                active_signals.append(
+                    {
+                        "key": key,
+                        "type": "monitored_contact",
+                        "value": hours_ago,
+                        "label": f"{label} hasn't written in {hours_ago}h",
+                    }
+                )
 
     if not active_signals:
         reasons = []
@@ -170,7 +196,7 @@ def decide():
         result = {
             "should_send": True,
             "signals": active_signals,
-            "reason": f"{len(active_signals)} active signals"
+            "reason": f"{len(active_signals)} active signals",
         }
 
     print(json.dumps(result, ensure_ascii=False, indent=2))

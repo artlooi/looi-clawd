@@ -45,6 +45,7 @@ EXIT_CONFIG_ERROR = 2
 # Config
 # ---------------------------------------------------------------------------
 
+
 def load_config() -> dict:
     """Load openclaw.json; return empty dict on failure."""
     if not CONFIG_PATH.exists():
@@ -91,6 +92,7 @@ def resolve_gateway_url(config: dict) -> str:
 # Gateway call via /v1/chat/completions (OpenAI-compatible)
 # ---------------------------------------------------------------------------
 
+
 def try_model(
     model: str,
     prompt: str,
@@ -110,10 +112,12 @@ def try_model(
 
     start = time.monotonic()
 
-    payload = json.dumps({
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-    }).encode("utf-8")
+    payload = json.dumps(
+        {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+    ).encode("utf-8")
 
     headers = {"Content-Type": "application/json"}
     if token:
@@ -141,7 +145,9 @@ def try_model(
         content = choices[0].get("message", {}).get("content", "").strip()
         if not content:
             if not quiet:
-                print(f"  ✗ {model}: empty content after {elapsed:.1f}s", file=sys.stderr)
+                print(
+                    f"  ✗ {model}: empty content after {elapsed:.1f}s", file=sys.stderr
+                )
             return None
 
         if not quiet:
@@ -155,18 +161,25 @@ def try_model(
                 body = exc.read().decode()[:200]
             except Exception:
                 body = str(exc)
-            print(f"  ✗ {model}: HTTP {exc.code} after {elapsed:.1f}s — {body}", file=sys.stderr)
+            print(
+                f"  ✗ {model}: HTTP {exc.code} after {elapsed:.1f}s — {body}",
+                file=sys.stderr,
+            )
         return None
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         elapsed = time.monotonic() - start
         if not quiet:
-            print(f"  ✗ {model}: {type(exc).__name__} after {elapsed:.1f}s", file=sys.stderr)
+            print(
+                f"  ✗ {model}: {type(exc).__name__} after {elapsed:.1f}s",
+                file=sys.stderr,
+            )
         return None
 
 
 # ---------------------------------------------------------------------------
 # Fallback chain
 # ---------------------------------------------------------------------------
+
 
 def run_with_fallback(
     models: List[str],
@@ -178,13 +191,18 @@ def run_with_fallback(
 ) -> Tuple[Optional[str], str, int]:
     """Try each model in order. Return (text, winning_model, attempts)."""
     if not quiet:
-        print(f"\n[fallback] {len(models)} model(s): {', '.join(models)}", file=sys.stderr)
+        print(
+            f"\n[fallback] {len(models)} model(s): {', '.join(models)}", file=sys.stderr
+        )
 
     for attempt, model in enumerate(models, start=1):
         result = try_model(model, prompt, token, gateway_url, timeout_sec, quiet)
         if result is not None:
             if not quiet:
-                print(f"\n[fallback] ✓ {model} (attempt {attempt}/{len(models)})", file=sys.stderr)
+                print(
+                    f"\n[fallback] ✓ {model} (attempt {attempt}/{len(models)})",
+                    file=sys.stderr,
+                )
             return result, model, attempt
 
     if not quiet:
@@ -195,6 +213,7 @@ def run_with_fallback(
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -214,28 +233,45 @@ Configuration (openclaw.json):
   gateway.auth.token: "your-token"
         """,
     )
-    parser.add_argument("--models", type=str, default=None,
-        help="Comma-separated model list (reads cron.fallbackModels if omitted)")
+    parser.add_argument(
+        "--models",
+        type=str,
+        default=None,
+        help="Comma-separated model list (reads cron.fallbackModels if omitted)",
+    )
     parser.add_argument("--prompt", type=str, default=None, help="Task prompt")
     parser.add_argument("--prompt-file", type=str, default=None, metavar="FILE")
-    parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_SEC,
-        help=f"Seconds per attempt (default: {DEFAULT_TIMEOUT_SEC})")
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=DEFAULT_TIMEOUT_SEC,
+        help=f"Seconds per attempt (default: {DEFAULT_TIMEOUT_SEC})",
+    )
     parser.add_argument("--quiet", action="store_true")
 
     args = parser.parse_args()
     config = load_config()
 
     # Models
-    models = ([m.strip() for m in args.models.split(",") if m.strip()]
-              if args.models else load_default_models(config))
+    models = (
+        [m.strip() for m in args.models.split(",") if m.strip()]
+        if args.models
+        else load_default_models(config)
+    )
     if not models:
-        print("ERROR: No models. Use --models or set cron.fallbackModels in openclaw.json", file=sys.stderr)
+        print(
+            "ERROR: No models. Use --models or set cron.fallbackModels in openclaw.json",
+            file=sys.stderr,
+        )
         return EXIT_CONFIG_ERROR
 
     # Auth
     token = load_token(config)
     if not token and not args.quiet:
-        print(f"WARNING: No token found ({TOKEN_ENV_VAR} / config). Trying without auth.", file=sys.stderr)
+        print(
+            f"WARNING: No token found ({TOKEN_ENV_VAR} / config). Trying without auth.",
+            file=sys.stderr,
+        )
 
     # Gateway
     gateway_url = resolve_gateway_url(config)
@@ -257,11 +293,19 @@ Configuration (openclaw.json):
 
     # Run
     result, _, attempts = run_with_fallback(
-        models, prompt, token, gateway_url, args.timeout, args.quiet,
+        models,
+        prompt,
+        token,
+        gateway_url,
+        args.timeout,
+        args.quiet,
     )
 
     if result is None:
-        print(f"ERROR: All {attempts} model(s) failed: {', '.join(models)}", file=sys.stderr)
+        print(
+            f"ERROR: All {attempts} model(s) failed: {', '.join(models)}",
+            file=sys.stderr,
+        )
         return EXIT_ALL_FAILED
 
     print(result)
