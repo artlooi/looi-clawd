@@ -36,6 +36,7 @@ clawd/
 - **RAG** — 71k chunks indexed. Agent retrieves relevant context before generating responses.
 - **DAG** — directed acyclic graph with 45k entities and 85k relations. Captures not just facts, but *why* decisions were made and what alternatives existed.
 - **Prompt injections** — persistent context injected each session to prevent drift in long conversations.
+- **Embedding cache** — local SQLite cache for query embedding vectors (`scripts/memory/embed_cache.py`). Repeated queries skip the provider network call and serve the normalized vector from disk. Enabled by default; set `EMBED_CACHE_ENABLED=0` to disable. See [CHANGELOG.md](CHANGELOG.md) for details.
 
 ```bash
 # Build/update vector index
@@ -43,6 +44,9 @@ python3 scripts/memory/build_vector_index.py --update
 
 # Search across memory
 python3 scripts/memory/unified_search.py "your query"
+
+# Run the memory test suite (unit + integration + smoke)
+python3 -m pytest scripts/memory/tests/ -q
 ```
 
 ### `skills/cron-model-fallback/`
