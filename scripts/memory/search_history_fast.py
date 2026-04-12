@@ -58,12 +58,20 @@ def get_key():
 
 
 def embed_google(text, key):
-    url = f"https://generativelanguage.googleapis.com/v1beta/{GOOGLE_MODEL}:embedContent"
-    payload = json.dumps({"model": GOOGLE_MODEL, "content": {"parts": [{"text": text[:8000]}]}}).encode()
-    req = urllib.request.Request(url, data=payload, headers={
-        "Content-Type": "application/json",
-        "x-goog-api-key": key,
-    })
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/{GOOGLE_MODEL}:embedContent"
+    )
+    payload = json.dumps(
+        {"model": GOOGLE_MODEL, "content": {"parts": [{"text": text[:8000]}]}}
+    ).encode()
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "x-goog-api-key": key,
+        },
+    )
     with urllib.request.urlopen(req, timeout=20) as r:
         d = json.loads(r.read())
     return d["embedding"]["values"]
@@ -74,22 +82,46 @@ def embed_ollama(text):
     # Try modern batch endpoint first (consistent with build_vector_index.py)
     try:
         url = f"{OLLAMA_HOST}/api/embed"
-        payload = json.dumps({"model": "nomic-embed-text", "input": text[:4000]}).encode()
-        req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
+        payload = json.dumps(
+            {"model": "nomic-embed-text", "input": text[:4000]}
+        ).encode()
+        req = urllib.request.Request(
+            url, data=payload, headers={"Content-Type": "application/json"}
+        )
         with urllib.request.urlopen(req, timeout=10) as r:
             d = json.loads(r.read())
         return d["embeddings"][0]
     except Exception:
         # Fallback to legacy single-embedding endpoint
         url = f"{OLLAMA_HOST}/api/embeddings"
-        payload = json.dumps({"model": "nomic-embed-text", "prompt": text[:4000]}).encode()
-        req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
+        payload = json.dumps(
+            {"model": "nomic-embed-text", "prompt": text[:4000]}
+        ).encode()
+        req = urllib.request.Request(
+            url, data=payload, headers={"Content-Type": "application/json"}
+        )
         with urllib.request.urlopen(req, timeout=10) as r:
             d = json.loads(r.read())
         return d["embedding"]
 
 
-def embed_query(query: str) -> np.ndarray | None:
+try:
+    from embed_cache import EmbedCache
+
+    _EMBED_CACHE: EmbedCache | None = (
+        EmbedCache() if os.getenv("EMBED_CACHE_ENABLED", "1") == "1" else None
+    )
+except Exception:
+    _EMBED_CACHE = None
+
+
+_CACHE_MODEL_DIMS: tuple[tuple[str, int], ...] = (
+    ("gemini-embedding-2-preview", 3072),
+    ("nomic-embed-text", 768),
+)
+
+
+def _embed_query_uncached(query: str) -> np.ndarray | None:
     """Try providers in order; return normalized vector or None on total failure."""
     emb = None
     key = get_key()
@@ -116,6 +148,34 @@ def embed_query(query: str) -> np.ndarray | None:
     return q / n
 
 
+def embed_query(query: str) -> np.ndarray | None:
+    """Return normalized query vector, serving from cache where possible.
+
+    The cache path is wrapped in try/except at every touch point so a
+    broken cache can never break search — any exception falls through
+    to the direct provider call.
+    """
+    if _EMBED_CACHE is not None:
+        for model, dims in _CACHE_MODEL_DIMS:
+            try:
+                cached = _EMBED_CACHE.get(query, model, dims)
+            except Exception:
+                cached = None
+            if cached is not None:
+                return cached
+
+    vec = _embed_query_uncached(query)
+
+    if vec is not None and _EMBED_CACHE is not None:
+        dims = int(vec.shape[0])
+        model = "gemini-embedding-2-preview" if dims == 3072 else "nomic-embed-text"
+        try:
+            _EMBED_CACHE.put(query, model, dims, vec)
+        except Exception:
+            pass  # cache failures never break search
+    return vec
+
+
 def db_signature() -> dict:
     st = VEC_DB.stat()
     return {
@@ -139,7 +199,9 @@ def _conn():
 
 def count_rows(conn: sqlite3.Connection, dims: int) -> int:
     return int(
-        conn.execute("SELECT COUNT(*) FROM chunks WHERE length(embedding)=?", (dims * 4,)).fetchone()[0]
+        conn.execute(
+            "SELECT COUNT(*) FROM chunks WHERE length(embedding)=?", (dims * 4,)
+        ).fetchone()[0]
     )
 
 
@@ -186,7 +248,9 @@ def build_cache(dims: int, sig: dict, prefix: str) -> CacheBundle:
     if i < total:
         # Rare case: zero vectors dropped. Keep arrays compact and rewrite memmap.
         matrix.flush()
-        compact = np.memmap(matrix_path, dtype=np.float32, mode="r", shape=(total, dims))[:i].copy()
+        compact = np.memmap(
+            matrix_path, dtype=np.float32, mode="r", shape=(total, dims)
+        )[:i].copy()
         del matrix
         matrix = np.memmap(matrix_path, dtype=np.float32, mode="w+", shape=(i, dims))
         matrix[:] = compact
@@ -249,7 +313,9 @@ def load_or_build_cache(dims: int) -> CacheBundle:
                 message_ids=ids_npz["message_ids"],
                 conv_ids=ids_npz["conv_ids"],
                 chunk_indexes=ids_npz["chunk_indexes"],
-                matrix=np.memmap(meta["matrix"], dtype=np.float32, mode="r", shape=(total, dims)),
+                matrix=np.memmap(
+                    meta["matrix"], dtype=np.float32, mode="r", shape=(total, dims)
+                ),
             )
         except Exception:
             # Corrupted/stale cache: rebuild.
@@ -277,8 +343,12 @@ def ensure_fts(conn: sqlite3.Connection):
     conn.execute(
         "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(text, content='chunks', content_rowid='chunk_id')"
     )
-    max_rowid = conn.execute("SELECT COALESCE(MAX(rowid),0) FROM chunks_fts").fetchone()[0]
-    max_chunk = conn.execute("SELECT COALESCE(MAX(chunk_id),0) FROM chunks").fetchone()[0]
+    max_rowid = conn.execute(
+        "SELECT COALESCE(MAX(rowid),0) FROM chunks_fts"
+    ).fetchone()[0]
+    max_chunk = conn.execute("SELECT COALESCE(MAX(chunk_id),0) FROM chunks").fetchone()[
+        0
+    ]
     if max_rowid < max_chunk:
         conn.execute(
             "INSERT INTO chunks_fts(rowid, text) SELECT chunk_id, text FROM chunks WHERE chunk_id > ?",
@@ -287,7 +357,9 @@ def ensure_fts(conn: sqlite3.Connection):
         conn.commit()
 
 
-def lexical_candidates(conn: sqlite3.Connection, query: str, limit: int = LEXICAL_CANDIDATES):
+def lexical_candidates(
+    conn: sqlite3.Connection, query: str, limit: int = LEXICAL_CANDIDATES
+):
     toks = tokens_for_query(query)
     if not toks:
         return {}
@@ -314,7 +386,8 @@ def lexical_candidates(conn: sqlite3.Connection, query: str, limit: int = LEXICA
         if wheres:
             params = [f"%{t}%" for t in toks] + [limit]
             rows = conn.execute(
-                f"SELECT chunk_id FROM chunks WHERE {wheres} ORDER BY chunk_id DESC LIMIT ?", params
+                f"SELECT chunk_id FROM chunks WHERE {wheres} ORDER BY chunk_id DESC LIMIT ?",
+                params,
             ).fetchall()
             for rank, (cid,) in enumerate(rows, 1):
                 scores[int(cid)] = 1.0 / (rank + 5)
@@ -322,13 +395,17 @@ def lexical_candidates(conn: sqlite3.Connection, query: str, limit: int = LEXICA
     return scores
 
 
-def candidate_row_indices(chunk_ids_sorted: np.ndarray, wanted_chunk_ids: Iterable[int]) -> np.ndarray:
+def candidate_row_indices(
+    chunk_ids_sorted: np.ndarray, wanted_chunk_ids: Iterable[int]
+) -> np.ndarray:
     wanted = np.asarray(sorted(set(int(x) for x in wanted_chunk_ids)), dtype=np.int64)
     if wanted.size == 0:
         return np.empty((0,), dtype=np.int64)
     pos = np.searchsorted(chunk_ids_sorted, wanted)
     # Clamp positions to valid range before indexing to avoid out-of-bounds
-    pos = np.minimum(pos, len(chunk_ids_sorted) - 1) if len(chunk_ids_sorted) > 0 else pos
+    pos = (
+        np.minimum(pos, len(chunk_ids_sorted) - 1) if len(chunk_ids_sorted) > 0 else pos
+    )
     ok = (pos < len(chunk_ids_sorted)) & (chunk_ids_sorted[pos] == wanted)
     return pos[ok]
 
@@ -347,25 +424,25 @@ def is_noisy_chunk(text: str) -> bool:
         '"type":"toolcall"',
         '"thinkingsignature"',
         'toolcall","id"',
-        'partialjson',
-        'conversation info (untrusted metadata)',
-        'sender (untrusted metadata)',
-        '[lc m fallback summary'.replace(' ', ''),
-        'read heartbeat.md if it exists',
-        'openclaw runtime context (internal)',
-        '<<<begin_untrusted_child_result>>>',
-        'base64 image data',
-        'data:image/',
-        'eyjhbgcioi',
+        "partialjson",
+        "conversation info (untrusted metadata)",
+        "sender (untrusted metadata)",
+        "[lc m fallback summary".replace(" ", ""),
+        "read heartbeat.md if it exists",
+        "openclaw runtime context (internal)",
+        "<<<begin_untrusted_child_result>>>",
+        "base64 image data",
+        "data:image/",
+        "eyjhbgcioi",
     ]
-    compact = lower.replace(' ', '')
-    if any(m.replace(' ', '') in compact for m in noise_markers):
+    compact = lower.replace(" ", "")
+    if any(m.replace(" ", "") in compact for m in noise_markers):
         return True
 
-    if len(t) > 1500 and ('{"' in t or '[{"' in t or '/9j/' in t):
+    if len(t) > 1500 and ('{"' in t or '[{"' in t or "/9j/" in t):
         return True
 
-    if re.search(r'/9j/[A-Za-z0-9+/]{200,}', t):
+    if re.search(r"/9j/[A-Za-z0-9+/]{200,}", t):
         return True
 
     # Long encoded / encrypted-looking blobs with almost no whitespace are never useful recall.
@@ -373,17 +450,17 @@ def is_noisy_chunk(text: str) -> bool:
         ws_ratio = sum(ch.isspace() for ch in t) / max(len(t), 1)
         if ws_ratio < 0.04:
             return True
-        if re.search(r'[A-Za-z0-9_\-/+=]{180,}', t):
+        if re.search(r"[A-Za-z0-9_\-/+=]{180,}", t):
             return True
 
     return False
 
 
 def clean_preview(text: str, limit: int = 700) -> str:
-    t = re.sub(r'\s+', ' ', (text or '').strip())
+    t = re.sub(r"\s+", " ", (text or "").strip())
     if len(t) <= limit:
         return t
-    return t[:limit].rstrip() + '…'
+    return t[:limit].rstrip() + "…"
 
 
 def fetch_details(conn: sqlite3.Connection, chunk_ids: list[int]):
@@ -414,7 +491,9 @@ def hybrid_search(query: str, top_k: int):
 
     # If embedding unavailable, graceful lexical-only path.
     if emb is None:
-        ranked = sorted(lex_scores.items(), key=lambda kv: kv[1], reverse=True)[: top_k * 6]
+        ranked = sorted(lex_scores.items(), key=lambda kv: kv[1], reverse=True)[
+            : top_k * 6
+        ]
         details = fetch_details(conn, [cid for cid, _ in ranked])
         conn.close()
         return dedupe_and_format(ranked, details, top_k, score_label="lex")
@@ -447,10 +526,10 @@ def hybrid_search(query: str, top_k: int):
     combined = []
     for cid in all_ids:
         v = vec_scores.get(cid, 0.0)
-        l = lex_scores.get(cid, 0.0)
+        lex = lex_scores.get(cid, 0.0)
         # Hybrid blending. Vector dominates, lexical nudges relevance.
-        score = 0.65 * v + 0.35 * l
-        combined.append((cid, score, v, l))
+        score = 0.65 * v + 0.35 * lex
+        combined.append((cid, score, v, lex))
 
     combined.sort(key=lambda x: x[1], reverse=True)
     details = fetch_details(conn, [cid for cid, *_ in combined[: top_k * 10]])
@@ -460,7 +539,9 @@ def hybrid_search(query: str, top_k: int):
     return dedupe_and_format(ranked, details, top_k, score_label="hybrid")
 
 
-def dedupe_and_format(ranked: list[tuple[int, float]], details: dict, top_k: int, score_label: str):
+def dedupe_and_format(
+    ranked: list[tuple[int, float]], details: dict, top_k: int, score_label: str
+):
     out = []
     seen_msg = set()
     seen_text = set()
@@ -527,7 +608,9 @@ def main():
     for rank, item in enumerate(results, 1):
         date = item["created_at"][:10] if item["created_at"] else "?"
         icon = "👤" if item["role"] == "user" else "🤖"
-        print(f"[{rank}] {icon} {date} score={item['score']:.3f} ({item['score_label']})")
+        print(
+            f"[{rank}] {icon} {date} score={item['score']:.3f} ({item['score_label']})"
+        )
         print(item["text"].strip())
         print()
 
