@@ -1,7 +1,7 @@
 #!/bin/bash
 # Soul Daemon runner — runs the full chain: collect → decide → notify
 set -e
-WORKSPACE="${SOUL_WORKSPACE:-/home/user/.openclaw/workspace}"  # example default, override via env
+WORKSPACE="${SOUL_WORKSPACE:-$HOME/.openclaw/workspace}"
 LOG="$WORKSPACE/soul/daemon.log"
 timestamp=$(date '+%Y-%m-%d %H:%M:%S')
 

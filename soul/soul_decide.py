@@ -36,8 +36,8 @@ except ImportError:
     TZ = timezone(timedelta(hours=3))
 
 WORKSPACE = os.environ.get(
-    "SOUL_WORKSPACE", "/home/user/.openclaw/workspace"
-)  # example default, override via env
+    "SOUL_WORKSPACE", os.path.expanduser("~/.openclaw/workspace")
+)
 SOUL_DIR = f"{WORKSPACE}/soul"
 
 # ---------------------------------------------------------------------------
